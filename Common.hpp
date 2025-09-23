@@ -16,6 +16,14 @@ struct GameData
 
 	// ハイスコア
 	Array<int32> highScores = { 10, 8, 6, 4, 2 };
+
+	// inyagoのテクスチャ
+	Texture inyago = Texture{ U"🐈"_emoji };
+
+
+	// キャラの向き
+	Point characterAngle = Point(0, 0);
+
 };
 
 using App = SceneManager<State, GameData>;
