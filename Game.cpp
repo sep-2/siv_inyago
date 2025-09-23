@@ -43,6 +43,6 @@ void Game::draw() const
 
 	// inyago をタイルサイズに合わせて正方形リサイズして中央描画
 	getData().inyago
-		.resized(m_tileSize, m_tileSize)   // 幅・高さをタイルサイズに揃える
+		.resized(m_tileSize*0.8, m_tileSize * 0.8)   // 幅・高さをタイルサイズに揃える
 		.drawAt(m_inyagoPos);
 }
