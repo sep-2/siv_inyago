@@ -20,4 +20,9 @@ private:
 
 	// タイルサイズ（描画時の inyago のサイズにも使用）
 	int m_tileSize = 0;
+
+	double m_boardStart = 0.0;
+	Point m_direction{ 1, 0 };
+	Optional<Point> m_turnReservation;
+	double m_moveSpeed = 240.0;
 };
