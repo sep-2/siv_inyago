@@ -1,7 +1,7 @@
 ﻿# pragma once
 # include "Common.hpp"
 
-// タイトルシーン
+// ゲーム本編のシーン
 class Game : public App::Scene
 {
 public:
@@ -15,7 +15,7 @@ public:
 private:
 	Grid<Rect> tiles{ Size{ 13, 13 } };
 
-	// inyago の現在位置（タイル中心）
+	// inyago の現在位置（タイル座標系ではなくシーン座標）
 	Vec2 m_inyagoPos;
 
 	// タイルサイズ（描画時の inyago のサイズにも使用）
@@ -25,4 +25,16 @@ private:
 	Point m_direction{ 1, 0 };
 	Optional<Point> m_turnReservation;
 	double m_moveSpeed = 240.0;
+
+	// フィールド上に出現させる魚の座標を保持（常時 2 匹）
+	Array<Vec2> m_fishPositions{ Vec2::Zero(), Vec2::Zero() };
+	// 魚を描画するためのテクスチャ（🐟 の絵文字を利用）
+	Texture m_fishTexture{ U"🐟"_emoji };
+	// 取得した魚の数（スコア）
+	int32 m_score = 0;
+
+	// ランダムなタイルを選んで魚を 2 匹分配置し直す
+	void spawnFishes();
+	// 任意の座標からタイルインデックスを逆算するヘルパー
+	Point calcTileIndex(const Vec2& pos) const;
 };

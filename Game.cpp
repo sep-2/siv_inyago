@@ -7,7 +7,7 @@ Game::Game(const InitData& init)
     const int start = (Scene::Width() - Scene::Height()) / 2;
     m_boardStart = start;
 
-    // チェスボード状にタイルを初期化
+    // チェスボード状にタイルを構築
     for (int y = 0; y < 13; ++y)
     {
         for (int x = 0; x < 13; ++x)
@@ -22,6 +22,50 @@ Game::Game(const InitData& init)
         start + centerIndex.x * m_tileSize + (m_tileSize / 2.0),
         centerIndex.y * m_tileSize + (m_tileSize / 2.0)
     };
+
+    // スコアをリセットし、共有データにも初期値を反映
+    m_score = 0;
+    getData().lastScore = 0;
+
+    // 初回分の魚を生成
+    spawnFishes();
+}
+
+Point Game::calcTileIndex(const Vec2& pos) const
+{
+    // シーン座標からタイルインデックスを逆算する（盤面外にはみ出した場合も安全に収める）
+    const int maxX = static_cast<int>(tiles.width()) - 1;
+    const int maxY = static_cast<int>(tiles.height()) - 1;
+    const double tileSize = static_cast<double>(m_tileSize);
+
+    const int indexX = Clamp(static_cast<int>((pos.x - m_boardStart) / tileSize), 0, maxX);
+    const int indexY = Clamp(static_cast<int>(pos.y / tileSize), 0, maxY);
+
+    return Point{ indexX, indexY };
+}
+
+void Game::spawnFishes()
+{
+    // 現在のタイルは除外しつつ、重複しない 2 か所を抽選
+    Array<Point> usedTiles;
+    usedTiles.reserve(3);
+    usedTiles << calcTileIndex(m_inyagoPos);
+
+    for (auto& fishPos : m_fishPositions)
+    {
+        Point candidate;
+
+        do
+        {
+            candidate = Point{
+                Random(0, static_cast<int>(tiles.width()) - 1),
+                Random(0, static_cast<int>(tiles.height()) - 1)
+            };
+        } while (usedTiles.contains(candidate));
+
+        usedTiles << candidate;
+        fishPos = Vec2{ tiles[candidate.y][candidate.x].center() };
+    }
 }
 
 void Game::update()
@@ -56,20 +100,9 @@ void Game::update()
     const double characterHalf = tileSize * 0.4;
     const double margin = (halfTile - characterHalf) + 0.01;
 
-    // タイルインデックスを盤面サイズ内に収めるためのラムダ
-    auto clampIndex = [](int value, int minValue, int maxValue)
-    {
-        return (value < minValue) ? minValue : ((value > maxValue) ? maxValue : value);
-    };
-
-    // 現在位置が属するタイルを算出し、その中心との差を調べる
-    const int maxX = static_cast<int>(tiles.width()) - 1;
-    const int maxY = static_cast<int>(tiles.height()) - 1;
-
-    const int tileX = clampIndex(static_cast<int>((m_inyagoPos.x - m_boardStart) / tileSize), 0, maxX);
-    const int tileY = clampIndex(static_cast<int>(m_inyagoPos.y / tileSize), 0, maxY);
-
-    const Rect& currentTile = tiles[tileY][tileX];
+    // ヘルパーを使って現在位置が属するタイルとその中心を把握
+    const Point currentIndex = calcTileIndex(m_inyagoPos);
+    const Rect& currentTile = tiles[currentIndex.y][currentIndex.x];
     const Vec2 tileCenter = Vec2{ currentTile.center() };
 
     // 中心との差分が一定以内なら「タイルの中にすっぽり収まっている」とみなす
@@ -136,6 +169,27 @@ void Game::update()
         // 計算済みの位置を確定
         m_inyagoPos = nextPos;
     }
+
+    // 魚との接触を検出してスコアを更新
+    const Circle inyagoHitBox{ m_inyagoPos, characterHalf };
+    const double fishRadius = tileSize * 0.3;
+    bool collected = false;
+
+    for (const auto& fishPos : m_fishPositions)
+    {
+        if (inyagoHitBox.intersects(Circle{ fishPos, fishRadius }))
+        {
+            collected = true;
+            break;
+        }
+    }
+
+    if (collected)
+    {
+        ++m_score;
+        getData().lastScore = m_score;
+        spawnFishes();
+    }
 }
 
 void Game::draw() const
@@ -152,9 +206,21 @@ void Game::draw() const
         }
     }
 
+    // フィールド上の魚を描画（常に 2 匹）
+    const double fishSize = m_tileSize * 0.6;
+    for (const auto& fishPos : m_fishPositions)
+    {
+        m_fishTexture
+            .resized(fishSize, fishSize)
+            .drawAt(fishPos);
+    }
+
     // inyago をタイルサイズに合わせてリサイズし中央に描画
     getData().inyago
         .resized(m_tileSize * 0.8, m_tileSize * 0.8)
         .drawAt(m_inyagoPos);
-}
 
+    // 現在のスコアを画面左上に表示
+    const Font& uiFont = FontAsset(U"Bold");
+    uiFont(U"Score: {}"_fmt(m_score)).draw(28, Vec2{ 20, 20 }, ColorF{ 0.15 });
+}
