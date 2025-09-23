@@ -28,6 +28,8 @@ Game::Game(const InitData& init)
     m_pathHistory.clear();
     m_pathHistory << centerIndex;
     m_tailPositions.clear();
+    m_pathSamples.clear();
+    m_pathSamples << m_inyagoPos;
     m_gameOver = false;
 
     // スコアをリセットし、共有データにも初期値を反映
@@ -82,22 +84,99 @@ void Game::spawnFishes()
     }
 }
 
+void Game::recordPathSample()
+{
+    if (m_pathSamples.isEmpty())
+    {
+        m_pathSamples << m_inyagoPos;
+        return;
+    }
+
+    const Vec2& latest = m_pathSamples.front();
+    const Vec2 diff = m_inyagoPos - latest;
+    const double moveLengthSq = diff.lengthSq();
+
+    if (moveLengthSq > 0.0001)
+    {
+        m_pathSamples.insert(m_pathSamples.begin(), m_inyagoPos);
+    }
+    else
+    {
+        m_pathSamples.front() = m_inyagoPos;
+    }
+
+    const double segmentLength = static_cast<double>(m_tileSize);
+    const double retainLength = segmentLength * (m_score + 1) + segmentLength * 2.0;
+
+    double accumulated = 0.0;
+    size_t keepCount = m_pathSamples.size();
+
+    for (size_t i = 1; i < m_pathSamples.size(); ++i)
+    {
+        accumulated += (m_pathSamples[i - 1] - m_pathSamples[i]).length();
+
+        if (accumulated > retainLength)
+        {
+            keepCount = i + 1;
+            break;
+        }
+    }
+
+    if (keepCount < m_pathSamples.size())
+    {
+        m_pathSamples.erase(m_pathSamples.begin() + keepCount, m_pathSamples.end());
+    }
+}
+
+Vec2 Game::samplePathAtDistance(double distance) const
+{
+    if (m_pathSamples.size() < 2)
+    {
+        return m_inyagoPos;
+    }
+
+    double remaining = distance;
+
+    for (size_t i = 1; i < m_pathSamples.size(); ++i)
+    {
+        const Vec2& from = m_pathSamples[i - 1];
+        const Vec2& to = m_pathSamples[i];
+        const Vec2 segment = to - from;
+        const double segmentLength = segment.length();
+
+        if (segmentLength <= 0.0001)
+        {
+            continue;
+        }
+
+        if (remaining <= segmentLength)
+        {
+            const double t = remaining / segmentLength;
+            return from + segment * t;
+        }
+
+        remaining -= segmentLength;
+    }
+
+    return m_pathSamples.back();
+}
+
 void Game::updateTailPositions()
 {
     m_tailPositions.clear();
 
-    if (m_pathHistory.isEmpty())
+    if ((m_score <= 0) || m_pathSamples.isEmpty())
     {
         return;
     }
 
-    const size_t available = (m_pathHistory.size() > 0) ? (m_pathHistory.size() - 1) : 0;
-    const size_t tailCount = Min(static_cast<size_t>(m_score), available);
+    const double segmentLength = static_cast<double>(m_tileSize);
+    const size_t tailCount = static_cast<size_t>(m_score);
 
-    for (size_t i = 0; i < tailCount; ++i)
+    for (size_t index = 0; index < tailCount; ++index)
     {
-        const Point& tile = m_pathHistory[i + 1];
-        m_tailPositions << Vec2{ tiles[tile.y][tile.x].center() };
+        const double distance = segmentLength * (index + 1);
+        m_tailPositions << samplePathAtDistance(distance);
     }
 }
 
@@ -188,7 +267,6 @@ void Game::update()
             }
 
             m_currentTile = currentIndex;
-            updateTailPositions();
         }
 
         Optional<Point> desiredTurn;
@@ -249,6 +327,9 @@ void Game::update()
         m_inyagoPos = nextPos;
     }
 
+    // 頭の軌跡を更新
+    recordPathSample();
+
     // 魚との接触を検出してスコアを更新
     const Circle inyagoHitBox{ m_inyagoPos, characterHalf };
     const double fishRadius = tileSize * 0.3;
@@ -268,8 +349,9 @@ void Game::update()
         ++m_score;
         getData().lastScore = m_score;
         spawnFishes();
-        updateTailPositions();
     }
+
+    updateTailPositions();
 }
 
 void Game::draw() const
