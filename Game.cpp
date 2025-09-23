@@ -23,12 +23,20 @@ Game::Game(const InitData& init)
         centerIndex.y * m_tileSize + (m_tileSize / 2.0)
     };
 
+    // スネーク用の履歴と状態を初期化
+    m_currentTile = centerIndex;
+    m_pathHistory.clear();
+    m_pathHistory << centerIndex;
+    m_tailPositions.clear();
+    m_gameOver = false;
+
     // スコアをリセットし、共有データにも初期値を反映
     m_score = 0;
     getData().lastScore = 0;
 
-    // 初回分の魚を生成
+    // 初回分の魚を生成し、追従猫の座標を更新
     spawnFishes();
+    updateTailPositions();
 }
 
 Point Game::calcTileIndex(const Vec2& pos) const
@@ -46,10 +54,16 @@ Point Game::calcTileIndex(const Vec2& pos) const
 
 void Game::spawnFishes()
 {
-    // 現在のタイルは除外しつつ、重複しない 2 か所を抽選
+    // 先頭と追従猫が占有しているタイルは除外して抽選する
     Array<Point> usedTiles;
-    usedTiles.reserve(3);
-    usedTiles << calcTileIndex(m_inyagoPos);
+    usedTiles.reserve(m_pathHistory.size() + 2);
+    for (const auto& tile : m_pathHistory)
+    {
+        if (not usedTiles.contains(tile))
+        {
+            usedTiles << tile;
+        }
+    }
 
     for (auto& fishPos : m_fishPositions)
     {
@@ -68,8 +82,37 @@ void Game::spawnFishes()
     }
 }
 
+void Game::updateTailPositions()
+{
+    m_tailPositions.clear();
+
+    if (m_pathHistory.isEmpty())
+    {
+        return;
+    }
+
+    const size_t available = (m_pathHistory.size() > 0) ? (m_pathHistory.size() - 1) : 0;
+    const size_t tailCount = Min(static_cast<size_t>(m_score), available);
+
+    for (size_t i = 0; i < tailCount; ++i)
+    {
+        const Point& tile = m_pathHistory[i + 1];
+        m_tailPositions << Vec2{ tiles[tile.y][tile.x].center() };
+    }
+}
+
 void Game::update()
 {
+    // ゲームオーバー時は操作を受け付けず、R キーでリスタート
+    if (m_gameOver)
+    {
+        if (KeyR.down())
+        {
+            changeScene(State::Game);
+        }
+        return;
+    }
+
     // 入力された方向が現在の進行方向と直交しているかを判定するラムダ
     const auto canTurnTo = [this](const Point& dir)
     {
@@ -100,7 +143,7 @@ void Game::update()
     const double characterHalf = tileSize * 0.4;
     const double margin = (halfTile - characterHalf) + 0.01;
 
-    // ヘルパーを使って現在位置が属するタイルとその中心を把握
+    // 現在位置が属するタイルとその中心を把握
     const Point currentIndex = calcTileIndex(m_inyagoPos);
     const Rect& currentTile = tiles[currentIndex.y][currentIndex.x];
     const Vec2 tileCenter = Vec2{ currentTile.center() };
@@ -111,7 +154,43 @@ void Game::update()
 
     if (fullyInside)
     {
-        // 実際に採用する方向を決めるため、一時的な変数を用意
+        // 新しいタイルへ踏み込んだタイミングで履歴を拡張し、自己衝突を判定
+        if (currentIndex != m_currentTile)
+        {
+            bool collision = false;
+
+            for (size_t i = 0; i < m_pathHistory.size(); ++i)
+            {
+                if (m_pathHistory[i] == currentIndex)
+                {
+                    const bool isTailEnd = (m_score > 0) && (i == (m_pathHistory.size() - 1));
+                    if (not isTailEnd)
+                    {
+                        collision = true;
+                    }
+                    break;
+                }
+            }
+
+            if (collision)
+            {
+                m_gameOver = true;
+                getData().lastScore = m_score;
+                return;
+            }
+
+            m_pathHistory.insert(m_pathHistory.begin(), currentIndex);
+
+            const size_t maxLength = static_cast<size_t>(m_score + 1);
+            if (m_pathHistory.size() > maxLength)
+            {
+                m_pathHistory.pop_back();
+            }
+
+            m_currentTile = currentIndex;
+            updateTailPositions();
+        }
+
         Optional<Point> desiredTurn;
 
         // 押しっぱなしのキー入力を優先的に拾うラムダ
@@ -189,6 +268,7 @@ void Game::update()
         ++m_score;
         getData().lastScore = m_score;
         spawnFishes();
+        updateTailPositions();
     }
 }
 
@@ -208,19 +288,30 @@ void Game::draw() const
 
     // フィールド上の魚を描画（常に 2 匹）
     const double fishSize = m_tileSize * 0.6;
+    const TextureRegion fishRegion = m_fishTexture.resized(fishSize, fishSize);
     for (const auto& fishPos : m_fishPositions)
     {
-        m_fishTexture
-            .resized(fishSize, fishSize)
-            .drawAt(fishPos);
+        fishRegion.drawAt(fishPos);
     }
 
-    // inyago をタイルサイズに合わせてリサイズし中央に描画
-    getData().inyago
-        .resized(m_tileSize * 0.8, m_tileSize * 0.8)
-        .drawAt(m_inyagoPos);
+    // 追従する猫を描画（古い順に描画して重なりを自然に）
+    const double catSize = m_tileSize * 0.8;
+    const TextureRegion catRegion = getData().inyago.resized(catSize, catSize);
+    for (size_t i = m_tailPositions.size(); i > 0; --i)
+    {
+        catRegion.drawAt(m_tailPositions[i - 1], ColorF{ 1.0, 1.0, 1.0, 0.85 });
+    }
+
+    // 先頭の猫（プレイヤー）
+    catRegion.drawAt(m_inyagoPos);
 
     // 現在のスコアを画面左上に表示
     const Font& uiFont = FontAsset(U"Bold");
     uiFont(U"Score: {}"_fmt(m_score)).draw(28, Vec2{ 20, 20 }, ColorF{ 0.15 });
+
+    // ゲームオーバー時は中央にメッセージを表示
+    if (m_gameOver)
+    {
+        uiFont(U"GAME OVER\nRキーでリスタート").drawAt(36, Scene::Center(), ColorF{ 0.2 });
+    }
 }
