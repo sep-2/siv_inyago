@@ -14,5 +14,5 @@ public:
 
 private:
 
-	
+	Grid<Rect> tiles{ Size{ 13, 13 } };
 };
