@@ -1,4 +1,4 @@
-﻿# include "Game.hpp"
+﻿#include "Game.hpp"
 
 Game::Game(const InitData& init)
     : IScene{ init }
@@ -23,22 +23,15 @@ Game::Game(const InitData& init)
         centerIndex.y * m_tileSize + (m_tileSize / 2.0)
     };
 
-    // スネーク用の履歴と状態を初期化
-    m_currentTile = centerIndex;
-    m_pathHistory.clear();
-    m_pathHistory << centerIndex;
-    m_tailPositions.clear();
-    m_pathSamples.clear();
-    m_pathSamples << m_inyagoPos;
-    m_gameOver = false;
+    m_trail.setSegmentLength(static_cast<double>(m_tileSize));
+    m_trail.reset(m_inyagoPos, centerIndex);
 
     // スコアをリセットし、共有データにも初期値を反映
     m_score = 0;
     getData().lastScore = 0;
 
-    // 初回分の魚を生成し、追従猫の座標を更新
+    // 初回分の魚を生成
     spawnFishes();
-    updateTailPositions();
 }
 
 Point Game::calcTileIndex(const Vec2& pos) const
@@ -56,10 +49,11 @@ Point Game::calcTileIndex(const Vec2& pos) const
 
 void Game::spawnFishes()
 {
-    // 先頭と追従猫が占有しているタイルは除外して抽選する
     Array<Point> usedTiles;
-    usedTiles.reserve(m_pathHistory.size() + 2);
-    for (const auto& tile : m_pathHistory)
+    const auto& occupied = m_trail.occupiedTiles();
+    usedTiles.reserve(occupied.size() + m_fishPositions.size());
+
+    for (const auto& tile : occupied)
     {
         if (not usedTiles.contains(tile))
         {
@@ -81,102 +75,6 @@ void Game::spawnFishes()
 
         usedTiles << candidate;
         fishPos = Vec2{ tiles[candidate.y][candidate.x].center() };
-    }
-}
-
-void Game::recordPathSample()
-{
-    if (m_pathSamples.isEmpty())
-    {
-        m_pathSamples << m_inyagoPos;
-        return;
-    }
-
-    const Vec2& latest = m_pathSamples.front();
-    const Vec2 diff = m_inyagoPos - latest;
-    const double moveLengthSq = diff.lengthSq();
-
-    if (moveLengthSq > 0.0001)
-    {
-        m_pathSamples.insert(m_pathSamples.begin(), m_inyagoPos);
-    }
-    else
-    {
-        m_pathSamples.front() = m_inyagoPos;
-    }
-
-    const double segmentLength = static_cast<double>(m_tileSize);
-    const double retainLength = segmentLength * (m_score + 1) + segmentLength * 2.0;
-
-    double accumulated = 0.0;
-    size_t keepCount = m_pathSamples.size();
-
-    for (size_t i = 1; i < m_pathSamples.size(); ++i)
-    {
-        accumulated += (m_pathSamples[i - 1] - m_pathSamples[i]).length();
-
-        if (accumulated > retainLength)
-        {
-            keepCount = i + 1;
-            break;
-        }
-    }
-
-    if (keepCount < m_pathSamples.size())
-    {
-        m_pathSamples.erase(m_pathSamples.begin() + keepCount, m_pathSamples.end());
-    }
-}
-
-Vec2 Game::samplePathAtDistance(double distance) const
-{
-    if (m_pathSamples.size() < 2)
-    {
-        return m_inyagoPos;
-    }
-
-    double remaining = distance;
-
-    for (size_t i = 1; i < m_pathSamples.size(); ++i)
-    {
-        const Vec2& from = m_pathSamples[i - 1];
-        const Vec2& to = m_pathSamples[i];
-        const Vec2 segment = to - from;
-        const double segmentLength = segment.length();
-
-        if (segmentLength <= 0.0001)
-        {
-            continue;
-        }
-
-        if (remaining <= segmentLength)
-        {
-            const double t = remaining / segmentLength;
-            return from + segment * t;
-        }
-
-        remaining -= segmentLength;
-    }
-
-    return m_pathSamples.back();
-}
-
-void Game::updateTailPositions()
-{
-    m_tailPositions.clear();
-
-    if ((m_score <= 0) || m_pathSamples.isEmpty())
-    {
-        return;
-    }
-
-    const double segmentLength = static_cast<double>(m_tileSize);
-    const size_t tailCount = static_cast<size_t>(m_score);
-
-    for (size_t index = 0; index < tailCount; ++index)
-    {
-        const double distance = segmentLength * (index + 1);
-        m_tailPositions << samplePathAtDistance(distance);
     }
 }
 
@@ -233,40 +131,17 @@ void Game::update()
 
     if (fullyInside)
     {
+        const Point currentHeadTile = m_trail.headTile();
+
         // 新しいタイルへ踏み込んだタイミングで履歴を拡張し、自己衝突を判定
-        if (currentIndex != m_currentTile)
+        if (currentIndex != currentHeadTile)
         {
-            bool collision = false;
-
-            for (size_t i = 0; i < m_pathHistory.size(); ++i)
-            {
-                if (m_pathHistory[i] == currentIndex)
-                {
-                    const bool isTailEnd = (m_score > 0) && (i == (m_pathHistory.size() - 1));
-                    if (not isTailEnd)
-                    {
-                        collision = true;
-                    }
-                    break;
-                }
-            }
-
-            if (collision)
+            if (m_trail.registerHeadTile(currentIndex, m_score))
             {
                 m_gameOver = true;
                 getData().lastScore = m_score;
                 return;
             }
-
-            m_pathHistory.insert(m_pathHistory.begin(), currentIndex);
-
-            const size_t maxLength = static_cast<size_t>(m_score + 1);
-            if (m_pathHistory.size() > maxLength)
-            {
-                m_pathHistory.pop_back();
-            }
-
-            m_currentTile = currentIndex;
         }
 
         Optional<Point> desiredTurn;
@@ -328,7 +203,7 @@ void Game::update()
     }
 
     // 頭の軌跡を更新
-    recordPathSample();
+    m_trail.recordHeadPosition(m_inyagoPos, m_score);
 
     // 魚との接触を検出してスコアを更新
     const Circle inyagoHitBox{ m_inyagoPos, characterHalf };
@@ -351,49 +226,5 @@ void Game::update()
         spawnFishes();
     }
 
-    updateTailPositions();
-}
-
-void Game::draw() const
-{
-    Scene::SetBackground(ColorF{ 0.2 });
-
-    // チェスボード状に盤面を描画
-    for (int y = 0; y < 13; ++y)
-    {
-        for (int x = 0; x < 13; ++x)
-        {
-            const bool isWhite = ((x + y) % 2 == 0);
-            tiles[y][x].draw(isWhite ? ColorF{ 1.0 } : ColorF{ 0.9 });
-        }
-    }
-
-    // フィールド上の魚を描画（常に 2 匹）
-    const double fishSize = m_tileSize * 0.6;
-    const TextureRegion fishRegion = m_fishTexture.resized(fishSize, fishSize);
-    for (const auto& fishPos : m_fishPositions)
-    {
-        fishRegion.drawAt(fishPos);
-    }
-
-    // 追従する猫を描画（古い順に描画して重なりを自然に）
-    const double catSize = m_tileSize * 0.8;
-    const TextureRegion catRegion = getData().inyago.resized(catSize, catSize);
-    for (size_t i = m_tailPositions.size(); i > 0; --i)
-    {
-        catRegion.drawAt(m_tailPositions[i - 1], ColorF{ 1.0, 1.0, 1.0, 0.85 });
-    }
-
-    // 先頭の猫（プレイヤー）
-    catRegion.drawAt(m_inyagoPos);
-
-    // 現在のスコアを画面左上に表示
-    const Font& uiFont = FontAsset(U"Bold");
-    uiFont(U"Score: {}"_fmt(m_score)).draw(28, Vec2{ 20, 20 }, ColorF{ 0.15 });
-
-    // ゲームオーバー時は中央にメッセージを表示
-    if (m_gameOver)
-    {
-        uiFont(U"GAME OVER\nRキーでリスタート").drawAt(36, Scene::Center(), ColorF{ 0.2 });
-    }
+    m_trail.rebuildTailPositions(m_score);
 }

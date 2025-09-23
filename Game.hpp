@@ -1,5 +1,6 @@
-﻿# pragma once
-# include "Common.hpp"
+﻿#pragma once
+#include "Common.hpp"
+#include "SnakeTrail.hpp"
 
 // ゲーム本編のシーン
 class Game : public App::Scene
@@ -33,25 +34,11 @@ private:
 	// 取得した魚の数（スコア）
 	int32 m_score = 0;
 
-	// 先頭が辿ったタイルの履歴（先頭は最新）
-	Array<Point> m_pathHistory;
-	// スコアに応じて追従する猫の描画座標
-	Array<Vec2> m_tailPositions;
-	// 頭が辿った軌跡の連続座標（最新が先頭）
-	Array<Vec2> m_pathSamples;
-	// 現在踏んでいるタイルのインデックスを保持
-	Point m_currentTile{ 0, 0 };
-	// 自己衝突でゲーム終了フラグ
+	SnakeTrail m_trail;
 	bool m_gameOver = false;
 
 	// ランダムなタイルを選んで魚を 2 匹分配置し直す
 	void spawnFishes();
 	// 任意の座標からタイルインデックスを逆算するヘルパー
 	Point calcTileIndex(const Vec2& pos) const;
-	// 頭の軌跡をサンプリングし、必要量だけ保持
-	void recordPathSample();
-	// 軌跡上の指定距離位置を取得
-	Vec2 samplePathAtDistance(double distance) const;
-	// パス履歴とスコアから追従猫の位置配列を更新
-	void updateTailPositions();
 };
